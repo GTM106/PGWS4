@@ -263,7 +263,8 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 	};
 
 	ID3D12Resource* idxBuff = nullptr;
-	//設定は、バッファのサイズ以外、頂点バッファの設定を使いまわしてよい	resdesc.Width = sizeof(indices);
+	//設定は、バッファのサイズ以外、頂点バッファの設定を使いまわしてよい	
+	resdesc.Width = sizeof(indices);
 	result = _dev->CreateCommittedResource(
 		&heapprop,
 		D3D12_HEAP_FLAG_NONE,
