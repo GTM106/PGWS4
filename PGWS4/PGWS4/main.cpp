@@ -219,9 +219,12 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 	ShowWindow(hwnd, SW_SHOW);
 
 	XMFLOAT3 vertices[] = {
-		{-0.5f,-0.7f,0.0f},//左下
-		{-0.0f,+0.7f,0.0f},//左上
-		{+0.5f,-0.7f,0.0f},//右下
+		{-0.4f,-0.4f,0.0f},//左下
+		{+0.4f,-0.4f,0.0f},//右上
+		{+0.0f,+0.7f,0.0f},//上
+		{-0.4f,+0.4f,0.0f},//左上
+		{+0.4f,+0.4f,0.0f},//右上
+		{+0.0f,-0.7f,0.0f},//下
 	};
 
 	D3D12_HEAP_PROPERTIES heapprop = {};
@@ -253,6 +256,33 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 	vbView.BufferLocation = vertBuff->GetGPUVirtualAddress();//バッファーの仮想アドレス
 	vbView.SizeInBytes = sizeof(vertices);//全バイト数
 	vbView.StrideInBytes = sizeof(vertices[0]);//1頂点あたりのバイト数
+
+	unsigned short indices[] = {
+		0,1,5,
+		3,2,4
+	};
+
+	ID3D12Resource* idxBuff = nullptr;
+	//設定は、バッファのサイズ以外、頂点バッファの設定を使いまわしてよい	resdesc.Width = sizeof(indices);
+	result = _dev->CreateCommittedResource(
+		&heapprop,
+		D3D12_HEAP_FLAG_NONE,
+		&resdesc,
+		D3D12_RESOURCE_STATE_GENERIC_READ,
+		nullptr,
+		IID_PPV_ARGS(&idxBuff));
+
+	//作ったバッファにインデックスデータをコピー
+	unsigned short* mappedIdx = nullptr;
+	idxBuff->Map(0, nullptr, (void**)&mappedIdx);
+	std::copy(std::begin(indices), std::end(indices), mappedIdx);
+	idxBuff->Unmap(0, nullptr);
+
+	//インデックスバッファビューを作成
+	D3D12_INDEX_BUFFER_VIEW ibView = {};
+	ibView.BufferLocation = idxBuff->GetGPUVirtualAddress();
+	ibView.Format = DXGI_FORMAT_R16_UINT;
+	ibView.SizeInBytes = sizeof(indices);
 
 	ID3DBlob* _vsBlob = nullptr;
 	ID3DBlob* _psBlob = nullptr;
@@ -339,14 +369,14 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 	gpipeline.PS.pShaderBytecode = _psBlob->GetBufferPointer();
 	gpipeline.PS.BytecodeLength = _psBlob->GetBufferSize();
 	gpipeline.SampleMask = D3D12_DEFAULT_SAMPLE_MASK;
-	
+
 	//まだアンチエイリアスは使わないためfalse
 	gpipeline.RasterizerState.MultisampleEnable = false;
 
 	gpipeline.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;//カリングしない
 	gpipeline.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;//中身を塗りつぶす
 	gpipeline.RasterizerState.DepthClipEnable = true;//深度方向のクリッピングは有効
-	
+
 	gpipeline.BlendState.AlphaToCoverageEnable = false;
 	gpipeline.BlendState.IndependentBlendEnable = false;
 
@@ -358,7 +388,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 	renderTargetBlendDesc.RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
 
 	gpipeline.BlendState.RenderTarget[0] = renderTargetBlendDesc;
-	
+
 	gpipeline.InputLayout.pInputElementDescs = inputLayout;//レイアウト先頭アドレス
 	gpipeline.InputLayout.NumElements = _countof(inputLayout);
 
@@ -434,9 +464,11 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 		_cmdList->SetComputeRootSignature(rootsignature);
 		_cmdList->RSSetViewports(1, &viewport);
 		_cmdList->RSSetScissorRects(1, &scissorrect);
-		_cmdList->IASetPrimitiveTopology(D3D10_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+		_cmdList->IASetPrimitiveTopology(D3D10_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
 		_cmdList->IASetVertexBuffers(0, 1, &vbView);
-		_cmdList->DrawInstanced(3, 1, 0, 0);
+		_cmdList->IASetIndexBuffer(&ibView);
+
+		_cmdList->DrawIndexedInstanced(6, 1, 0, 0, 0);
 
 		//前後だけ入れ替える
 		BarrierDesc.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
