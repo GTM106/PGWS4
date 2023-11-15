@@ -321,6 +321,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 	);
 
 	ID3D12RootSignature* rootsignature = nullptr;
+	result = D3D12SerializeRootSignature(&rootSignatureDesc, D3D_ROOT_SIGNATURE_VERSION_1_0, &rootSigBlob, &errorBlob);
 	result = _dev->CreateRootSignature(
 		0,//nodemask,0でよい
 		rootSigBlob->GetBufferPointer(),
@@ -429,7 +430,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 		//画面クリア
 		float clearColor[] = { red,green,blue,1.0f };
 		_cmdList->ClearRenderTargetView(rtvH, clearColor, 0, nullptr);
-
+		_cmdList->SetGraphicsRootSignature(rootsignature);
 		_cmdList->SetComputeRootSignature(rootsignature);
 		_cmdList->RSSetViewports(1, &viewport);
 		_cmdList->RSSetScissorRects(1, &scissorrect);
@@ -440,6 +441,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 		//前後だけ入れ替える
 		BarrierDesc.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
 		BarrierDesc.Transition.StateAfter = D3D12_RESOURCE_STATE_PRESENT;
+		_cmdList->ResourceBarrier(1, &BarrierDesc);
 
 		//命令のクローズ
 		_cmdList->Close();
@@ -456,8 +458,6 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 			WaitForSingleObject(event, INFINITE);//イベント発生まで無限に待つ
 			CloseHandle(event);//イベントハンドルを閉じる
 		}
-
-		_cmdList->SetPipelineState(_pipelineState);
 
 		//キューをクリア
 		result = _cmdAllocator->Reset();
