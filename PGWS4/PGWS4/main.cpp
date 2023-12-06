@@ -6,6 +6,7 @@
 #include <vector>
 #include <d3dcompiler.h>
 #include <DirectXTex.h>
+#include <d3dx12.h>
 #ifdef _DEBUG
 #include <iostream>
 #endif
@@ -55,6 +56,16 @@ void EnableDebugLayer() {
 
 float saturate(float value) {
 	return min(max(value, 0.0f), 1.0f);
+}
+
+/// <summary>
+/// アライメントに揃えたサイズを返す
+/// </summary>
+/// <param name="size">元のサイズ</param>
+/// <param name="alignment">アライメントサイズ</param>
+/// <returns>アライメントを揃えたサイズ</returns>
+size_t AlignmentedSize(size_t size, size_t alignment) {
+	return size + alignment - size % alignment;
 }
 
 #ifdef _DEBUG
@@ -237,29 +248,15 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 		{{+0.4f,+0.7f,0.0f},{1.0f,0.0f}},//右上
 	};
 
-	D3D12_HEAP_PROPERTIES heapprop = {};
-	heapprop.Type = D3D12_HEAP_TYPE_UPLOAD;
-	heapprop.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
-	heapprop.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
-
-	D3D12_RESOURCE_DESC resdesc = {};
-	resdesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
-	resdesc.Width = sizeof(vertices);
-	resdesc.Height = 1;
-	resdesc.DepthOrArraySize = 1;
-	resdesc.MipLevels = 1;
-	resdesc.Format = DXGI_FORMAT_UNKNOWN;
-	resdesc.SampleDesc.Count = 1;
-	resdesc.Flags = D3D12_RESOURCE_FLAG_NONE;
-	resdesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
-
 	ID3D12Resource* vertBuff = nullptr;
 
-	result = _dev->CreateCommittedResource(&heapprop, D3D12_HEAP_FLAG_NONE, &resdesc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&vertBuff));
+	auto heapProp = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
+	auto resourceDesc = CD3DX12_RESOURCE_DESC::Buffer(sizeof(vertices));
+	result = _dev->CreateCommittedResource(&heapProp, D3D12_HEAP_FLAG_NONE, &resourceDesc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&vertBuff));
 
 	Vertex* vertMap = nullptr;
 	result = vertBuff->Map(0, nullptr, (void**)&vertMap);
-	copy(begin(vertices), end(vertices), vertMap);
+	std::copy(begin(vertices), end(vertices), vertMap);
 	vertBuff->Unmap(0, nullptr);
 
 	D3D12_VERTEX_BUFFER_VIEW vbView = {};
@@ -476,36 +473,74 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 
 	auto img = scratchImg.GetImage(0, 0, 0);
 
+	//中間バッファーとしてのアップロードヒープ設定
+	D3D12_HEAP_PROPERTIES uploadHeapProp = {};
+
+	//マップ可能にするため、UPLOADにする
+	uploadHeapProp.Type = D3D12_HEAP_TYPE_UPLOAD;
+
+	//アップロード用に使用すること前提のため、Unknown
+	uploadHeapProp.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
+	uploadHeapProp.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
+
+	uploadHeapProp.CreationNodeMask = 0;//単一アダプターのため0
+	uploadHeapProp.VisibleNodeMask = 0;//単一アダプターのため0
+
+	D3D12_RESOURCE_DESC resDesc = {};
+
+	resDesc.Format = DXGI_FORMAT_UNKNOWN; //単なるデータの塊なのでUnknown
+	resDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER; //単なるバッファー
+
+	resDesc.Width = AlignmentedSize(img->rowPitch, D3D12_TEXTURE_DATA_PITCH_ALIGNMENT) * img->height;
+	resDesc.Height = 1;
+	resDesc.DepthOrArraySize = 1;
+	resDesc.MipLevels = 1;
+
+	resDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR; //連続したデータ
+	resDesc.Flags = D3D12_RESOURCE_FLAG_NONE; //特にフラグなし
+
+	resDesc.SampleDesc.Count = 1; //通常テクスチャなのでアンチエイリアシングしない
+	resDesc.SampleDesc.Quality = 0;
+
+	//中間バッファー作成
+	ID3D12Resource* uploadbuff = nullptr;
+
+	result = _dev->CreateCommittedResource(
+		&uploadHeapProp,
+		D3D12_HEAP_FLAG_NONE,//特に指定なし
+		&resDesc,
+		D3D12_RESOURCE_STATE_GENERIC_READ, //CPUから書き込み可能、GPUからは読み取り専用
+		nullptr,
+		IID_PPV_ARGS(&uploadbuff)
+	);
+
 	//WriteToSubersourceで転送するためのヒープ設定
 	D3D12_HEAP_PROPERTIES texHeapProp = {};
 	//特殊な設定なので、DefaultでもUPLOADでもOK
-	texHeapProp.Type = D3D12_HEAP_TYPE_CUSTOM;
+	texHeapProp.Type = D3D12_HEAP_TYPE_DEFAULT;
 	//ライトバッグ
-	texHeapProp.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_WRITE_BACK;
+	texHeapProp.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
 	//転送は0、つまりCPU側から直接行う
-	texHeapProp.MemoryPoolPreference = D3D12_MEMORY_POOL_L0;
+	texHeapProp.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
 	//単一アダプタのため 0
 	texHeapProp.CreationNodeMask = 0;
 	texHeapProp.VisibleNodeMask = 0;
 
-	D3D12_RESOURCE_DESC resDesc = {};
+	//リソース設定(変数は使いまわし)
 	resDesc.Format = metadata.format;
-	resDesc.Width = static_cast<UINT>(metadata.width);
-	resDesc.Height = static_cast<UINT>(metadata.height);
-	resDesc.DepthOrArraySize = static_cast<uint16_t>(metadata.arraySize);
-	resDesc.SampleDesc.Count = 1;
-	resDesc.SampleDesc.Quality = 0;
-	resDesc.MipLevels = static_cast<uint16_t>(metadata.mipLevels);//ミップマップしないのでミップ数は一つ
-	resDesc.Dimension = static_cast<D3D12_RESOURCE_DIMENSION>(metadata.dimension);
+	resDesc.Width = static_cast<UINT>(metadata.width);//幅
+	resDesc.Height = static_cast<UINT>(metadata.height);//高さ
+	resDesc.DepthOrArraySize = static_cast<UINT16>(metadata.arraySize);//2Dで配列でもないので１
+	resDesc.MipLevels = static_cast<UINT16>(metadata.mipLevels);//ミップマップしないのでミップ数は１つ
+	resDesc.Dimension = static_cast<D3D12_RESOURCE_DIMENSION>(metadata.dimension);//2Dテクスチャ用
 	resDesc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
-	resDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
 
 	ID3D12Resource* texbuff = nullptr;
 	result = _dev->CreateCommittedResource(
 		&texHeapProp,
 		D3D12_HEAP_FLAG_NONE,
 		&resDesc,
-		D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+		D3D12_RESOURCE_STATE_COPY_DEST,
 		nullptr,
 		IID_PPV_ARGS(&texbuff));
 
@@ -516,6 +551,69 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 		static_cast<UINT>(img->rowPitch),
 		static_cast<UINT>(img->slicePitch)
 	);
+
+	uint8_t* mapforImg = nullptr; //image->pixelsと同じ型にする
+	result = uploadbuff->Map(0, nullptr, (void**)&mapforImg);
+
+	auto srcAddress = img->pixels;
+	auto rowPitch = AlignmentedSize(img->rowPitch, D3D12_TEXTURE_DATA_PITCH_ALIGNMENT);
+	for (int y = 0; y < img->height; y++) {
+		std::copy_n(srcAddress,
+			rowPitch,
+			mapforImg);//コピー
+
+		//1行ごとの辻褄を合わせる
+		srcAddress += img->rowPitch;
+		mapforImg += rowPitch;
+	}
+
+	uploadbuff->Unmap(0, nullptr);
+
+	D3D12_TEXTURE_COPY_LOCATION dst = {};
+
+	//コピー先指定
+	dst.pResource = texbuff;
+	dst.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+	dst.SubresourceIndex = 0;
+
+	D3D12_TEXTURE_COPY_LOCATION src = {};
+
+	//コピー元（アップロード側）設定
+	src.pResource = uploadbuff; //中間バッファー
+	src.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+	src.PlacedFootprint.Offset = 0;
+	src.PlacedFootprint.Footprint.Width = static_cast<UINT>(metadata.width);
+	src.PlacedFootprint.Footprint.Height = static_cast<UINT>(metadata.height);
+	src.PlacedFootprint.Footprint.Depth = static_cast<UINT>(metadata.depth);
+	src.PlacedFootprint.Footprint.RowPitch =
+		static_cast<UINT>(AlignmentedSize(img->rowPitch, D3D12_TEXTURE_DATA_PITCH_ALIGNMENT));
+	src.PlacedFootprint.Footprint.Format = img->format;
+
+	_cmdList->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
+
+	auto BarrierDesc = CD3DX12_RESOURCE_BARRIER::Transition(
+		texbuff, D3D12_RESOURCE_STATE_COPY_DEST,
+		D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+
+	_cmdList->ResourceBarrier(1, &BarrierDesc);
+	_cmdList->Close();
+
+	//コマンドリストの実行
+	ID3D12CommandList* cmdlists[] = { _cmdList };
+	_cmdQueue->ExecuteCommandLists(1, cmdlists);
+
+	_cmdQueue->Signal(_fence, ++_fenceVal);
+
+	if (_fence->GetCompletedValue() != _fenceVal) {
+		auto event = CreateEvent(nullptr, false, false, nullptr);
+		_fence->SetEventOnCompletion(_fenceVal, event);//イベントハンドルの取得
+		WaitForSingleObject(event, INFINITE);//イベント発生まで無限に待つ
+		CloseHandle(event);//イベントハンドルを閉じる
+	}
+
+	//キューをクリア
+	result = _cmdAllocator->Reset();
+	_cmdList->Reset(_cmdAllocator, nullptr);
 
 	ID3D12DescriptorHeap* texDescHeap = nullptr;
 	D3D12_DESCRIPTOR_HEAP_DESC descHeapDesc = {};
@@ -561,14 +659,9 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 
 		_cmdList->SetPipelineState(_pipelineState);
 
-		D3D12_RESOURCE_BARRIER BarrierDesc = {};
-		BarrierDesc.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;//遷移
-		BarrierDesc.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE;//特に指定なし
-		BarrierDesc.Transition.pResource = _backBuffers[bbIdx];
-		BarrierDesc.Transition.Subresource = 0;
-		BarrierDesc.Transition.StateBefore = D3D12_RESOURCE_STATE_PRESENT;//直前はPRESENT状態
-		BarrierDesc.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;//今からRT状態
-		_cmdList->ResourceBarrier(1, &BarrierDesc);//バリア指定実行
+		auto BarrierDesc = CD3DX12_RESOURCE_BARRIER::Transition(
+			_backBuffers[bbIdx], D3D12_RESOURCE_STATE_PRESENT,
+			D3D12_RESOURCE_STATE_RENDER_TARGET);
 
 		auto rtvH = rtvHeaps->GetCPUDescriptorHandleForHeapStart();
 		rtvH.ptr += bbIdx * _dev->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
