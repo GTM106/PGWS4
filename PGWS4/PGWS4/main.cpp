@@ -241,10 +241,10 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 	};
 
 	Vertex vertices[] = {
-		{{-0.4f,-0.7f,0.0f},{0.0f,1.0f}},//左下
-		{{-0.4f,+0.7f,0.0f},{0.0f,0.0f}},//左上
-		{{+0.4f,-0.7f,0.0f},{1.0f,1.0f}},//右下
-		{{+0.4f,+0.7f,0.0f},{1.0f,0.0f}},//右上
+		{{-1.0f,-1.0f,0.0f},{0.0f,1.0f}},//左下
+		{{-1.0f,+1.0f,0.0f},{0.0f,0.0f}},//左上
+		{{+1.0f,-1.0f,0.0f},{1.0f,1.0f}},//右下
+		{{+1.0f,+1.0f,0.0f},{1.0f,0.0f}},//右上
 	};
 
 	ID3D12Resource* vertBuff = nullptr;
@@ -359,13 +359,13 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 	};
 
 	D3D12_DESCRIPTOR_RANGE descTblRange[2] = {};
-	
+
 	//テクスチャ用レジスター0番
 	descTblRange[0].NumDescriptors = 1;//テクスチャ1つ
 	descTblRange[0].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;//種別はテクスチャ
 	descTblRange[0].BaseShaderRegister = 0;//0番スロットから
 	descTblRange[0].OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
-	
+
 	//定数用レジスター0番
 	descTblRange[1].NumDescriptors = 1;//テクスチャ1つ
 	descTblRange[1].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_CBV;//種別は定数
@@ -621,7 +621,22 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 	result = _cmdAllocator->Reset();
 	_cmdList->Reset(_cmdAllocator, nullptr);
 
-	XMMATRIX matrix = XMMatrixIdentity();
+	XMMATRIX worldMat = XMMatrixRotationY(XM_PIDIV4);
+
+	XMFLOAT3 eye(0, 0, -5);
+	XMFLOAT3 target(0, 0, 0);
+	XMFLOAT3 up(0, 1, 0);
+
+	auto viewMat = XMMatrixLookAtLH(
+		XMLoadFloat3(&eye), XMLoadFloat3(&target), XMLoadFloat3(&up)
+	);
+
+	auto projMat = XMMatrixPerspectiveFovLH(
+		XM_PIDIV2,//画角は90度
+		static_cast<float>(window_width) / static_cast<float>(window_height),
+		1.0f,
+		10.0f
+	);
 
 	ID3D12Resource* constBuff = nullptr;
 	auto heapPropppp = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
@@ -638,7 +653,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 
 	XMMATRIX* mapMatrix; //マップ先を示すポインタ
 	result = constBuff->Map(0, nullptr, (void**)&mapMatrix);//マップ
-	*mapMatrix = matrix; //行列の内容をコピー
+	//*mapMatrix = matrix; //行列の内容をコピー
 
 	ID3D12DescriptorHeap* basicDescHeap = nullptr;
 	D3D12_DESCRIPTOR_HEAP_DESC descHeapDesc = {};
@@ -668,7 +683,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 	);
 
 	//次の場所に移動
-	basicHeapHandle.ptr += 
+	basicHeapHandle.ptr +=
 		_dev->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 
 	D3D12_CONSTANT_BUFFER_VIEW_DESC cbvDesc = {};
@@ -681,6 +696,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 	MSG msg = {};
 	int t = 0;
 	int d = 140;
+	float angle = 0.0f;
 
 	while (true) {
 		if (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE)) {
@@ -691,6 +707,10 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 			TranslateMessage(&msg);
 			DispatchMessage(&msg);
 		}
+
+		angle += 0.1f;
+		worldMat = XMMatrixRotationY(angle);
+		*mapMatrix = worldMat * viewMat * projMat;
 
 		//DirectX処理
 		auto bbIdx = _swapchain->GetCurrentBackBufferIndex();
@@ -718,7 +738,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 		_cmdList->SetGraphicsRootSignature(rootsignature);
 		_cmdList->SetDescriptorHeaps(1, &basicDescHeap);
 		auto heapHandle = basicDescHeap->GetGPUDescriptorHandleForHeapStart();
-		
+
 		_cmdList->SetGraphicsRootDescriptorTable(
 			0,//ルートパラメータインデックス
 			basicDescHeap->GetGPUDescriptorHandleForHeapStart());		_cmdList->SetComputeRootSignature(rootsignature);
